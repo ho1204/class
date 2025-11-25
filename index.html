@@ -122,6 +122,11 @@
             color: #155724;
             border-color: #c3e6cb;
         }
+        .feedback-message.warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border-color: #ffeeba;
+        }
 
         /* 4. 선택 영역 (버튼형 UI) */
         .selection-container {
@@ -423,17 +428,34 @@
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    // Global variables from Canvas environment
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+    // ------------------------------------------------------------------
+    // 1. 캔버스 환경 자동 감지 (수정할 필요 없음)
+    // ------------------------------------------------------------------
+    const envConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    const envAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+    // ------------------------------------------------------------------
+    // 2. 외부 배포(Vercel 등)용 수동 설정
+    // **캔버스에서는 아래 값을 입력하지 않아도 작동합니다!**
+    // **Vercel 배포 시에만 아래 값을 채워주세요.**
+    // ------------------------------------------------------------------
+    const manualConfig = {
+        apiKey: "",              
+        authDomain: "",
+        projectId: "",
+        storageBucket: "",
+        messagingSenderId: "",
+        appId: ""
+    };
+    // ------------------------------------------------------------------
 
     let app, db, auth;
     let userId = null;
     let logCollectionRef = null;
-    let logs = []; // 인메모리 로그 데이터
+    let logs = []; 
     let activeLogFilter = '전체'; 
-    let deleteTargetId = null; // 삭제할 대상 ID 저장용
+    let deleteTargetId = null;
 
     // --- 데이터 정의 ---
     const classData = [
@@ -453,70 +475,89 @@
     });
     allStudents = Array.from(allStudents).sort();
 
-    // --- Start App (Modified Logic) ---
-    // 모듈 스크립트 실행 시점에 바로 앱 초기화 시도
+    // --- 앱 시작 ---
     startApp();
 
     function startApp() {
-        // UI 초기화 먼저 수행
         document.getElementById('date').valueAsDate = new Date();
         createClassButtons();
         createStudentButtons();
         createLogFilterButtons();
         setupModalEvents();
         
-        // 저장 버튼 이벤트
         document.getElementById('save-button').addEventListener('click', saveLog);
         
-        // Firebase 초기화 호출
+        // Firebase 초기화 시작
         initializeFirebase();
     }
 
-    // --- Firebase 초기화 ---
+    // --- Firebase 초기화 (수정됨) ---
     function initializeFirebase() {
         const saveBtn = document.getElementById('save-button');
+        const statusMsg = document.getElementById('status-message');
 
-        if (!firebaseConfig) {
-            saveBtn.innerText = "설정 오류 (Config 없음)";
-            showFeedback("Firebase 설정 오류: Config를 찾을 수 없습니다.", 'error');
+        // 1. 사용할 설정 결정 (캔버스 환경 우선)
+        let configToUse = null;
+
+        if (envConfig) {
+            // 캔버스 환경
+            configToUse = envConfig;
+        } else if (manualConfig.apiKey && manualConfig.apiKey !== "") {
+            // Vercel 등 외부 환경 (수동 설정이 있을 때)
+            configToUse = manualConfig;
+        }
+
+        // 2. 설정이 없는 경우 처리 (Vercel 배포 직후 등)
+        if (!configToUse) {
+            console.warn("Firebase 설정이 없습니다.");
+            saveBtn.innerText = "설정 필요 (Vercel 배포 시 코드 수정)";
+            saveBtn.disabled = true; // 저장만 막고 앱은 실행
+            
+            showFeedback("Vercel 배포 시 코드 내 'manualConfig' 값을 채워주세요.", 'warning', 8000);
+            statusMsg.innerText = "설정이 없어 데이터를 불러올 수 없습니다.";
             return;
         }
 
+        // 3. Firebase 초기화 진행
         try {
-            app = initializeApp(firebaseConfig);
+            app = initializeApp(configToUse);
             db = getFirestore(app);
             auth = getAuth(app);
             
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
-                    // 로그인 성공 상태
+                    // 로그인 성공
                     userId = user.uid;
-                    logCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tutoring_logs`);
+                    // 앱 ID도 환경에 따라 다르게 적용
+                    const currentAppId = envConfig ? envAppId : "my-class-log-app";
                     
-                    // 저장 버튼 활성화
+                    logCollectionRef = collection(db, `artifacts/${currentAppId}/users/${userId}/tutoring_logs`);
+                    
                     saveBtn.disabled = false;
                     saveBtn.innerText = '기록 저장하기';
                     
                     setupLogListener();
                 } else {
-                    // 로그인 되어 있지 않음 -> 로그인 시도
+                    // 로그인 시도
                     try {
                         if (initialAuthToken) {
+                             // 캔버스 환경 전용 인증
                             await signInWithCustomToken(auth, initialAuthToken);
                         } else {
+                            // 일반 익명 인증
                             await signInAnonymously(auth);
                         }
-                        // 로그인 성공하면 onAuthStateChanged가 다시 호출됨
                     } catch (error) {
                         console.error("Login Error:", error);
                         saveBtn.innerText = "로그인 실패";
-                        showFeedback("로그인에 실패했습니다.", 'error');
+                        showFeedback("로그인 실패: " + error.message, 'error');
                     }
                 }
             });
         } catch (e) {
             console.error("Firebase Init Error:", e);
             saveBtn.innerText = "초기화 오류";
+            showFeedback("Firebase 초기화 중 오류가 발생했습니다.", 'error');
         }
     }
     
@@ -535,7 +576,7 @@
             // 최신순 정렬
             logs = fetchedLogs.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0));
             
-            // 데이터 수신 성공 시 바로 렌더링
+            // UI 갱신
             renderLogs();
             
         }, (error) => {
@@ -544,7 +585,7 @@
         });
     }
 
-    // 모달 관련 이벤트 설정
+    // 모달 이벤트
     function setupModalEvents() {
         const modal = document.getElementById('delete-modal');
         const confirmBtn = document.getElementById('confirm-delete');
@@ -653,6 +694,7 @@
         if (!feedbackEl) return;
         
         feedbackEl.className = 'feedback-message'; 
+        feedbackEl.classList.remove('success', 'error', 'warning'); // 기존 클래스 제거
         feedbackEl.classList.add(type);
         feedbackEl.innerText = message;
         feedbackEl.style.display = 'block';
@@ -665,7 +707,7 @@
     // --- 기록 저장 ---
     async function saveLog() {
         if (!userId || !logCollectionRef) {
-            showFeedback("로그인 정보를 불러오는 중입니다. 잠시 후 시도해주세요.", 'error');
+            showFeedback("로그인 정보를 불러오는 중입니다...", 'error');
             return;
         }
 
@@ -709,12 +751,11 @@
     async function deleteSingleLog(logId) {
         if (!logCollectionRef) return;
         try {
-            // [수정] 정확한 문서 경로로 삭제
             await deleteDoc(doc(logCollectionRef, logId));
             showFeedback("삭제되었습니다.", 'success', 2000);
         } catch (error) {
             console.error("Delete Error:", error);
-            showFeedback("삭제 실패", 'error');
+            showFeedback("삭제 실패 (권한 문제일 수 있습니다)", 'error');
         }
     }
 
