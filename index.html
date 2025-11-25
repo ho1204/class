@@ -276,7 +276,7 @@
              font-weight: bold;
         }
         
-        /* [수정] 학생 이름 스타일 변경 */
+        /* 학생 이름 스타일 */
         .log-members {
             font-size: 0.8em; /* 글자 크기 축소 */
             color: #6c757d;
@@ -285,7 +285,7 @@
             
             /* 줄바꿈 허용 */
             white-space: normal; 
-            word-break: keep-all; /* 단어 단위로 줄바꿈 (한글 최적화) */
+            word-break: keep-all; /* 단어 단위로 줄바꿈 */
             line-height: 1.3;
             
             max-width: 60%; 
@@ -297,7 +297,7 @@
             padding: 20px;
         }
 
-        /* [추가] 삭제 확인 모달 스타일 */
+        /* 삭제 확인 모달 스타일 */
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -406,7 +406,7 @@
 
 </div>
 
-<!-- [추가] 삭제 확인 모달 -->
+<!-- 삭제 확인 모달 -->
 <div id="delete-modal" class="modal-overlay">
     <div class="modal-content">
         <div class="modal-text">이 기록을 삭제하시겠습니까?</div>
@@ -453,43 +453,71 @@
     });
     allStudents = Array.from(allStudents).sort();
 
+    // --- Start App (Modified Logic) ---
+    // 모듈 스크립트 실행 시점에 바로 앱 초기화 시도
+    startApp();
+
+    function startApp() {
+        // UI 초기화 먼저 수행
+        document.getElementById('date').valueAsDate = new Date();
+        createClassButtons();
+        createStudentButtons();
+        createLogFilterButtons();
+        setupModalEvents();
+        
+        // 저장 버튼 이벤트
+        document.getElementById('save-button').addEventListener('click', saveLog);
+        
+        // Firebase 초기화 호출
+        initializeFirebase();
+    }
+
     // --- Firebase 초기화 ---
     function initializeFirebase() {
+        const saveBtn = document.getElementById('save-button');
+
         if (!firebaseConfig) {
+            saveBtn.innerText = "설정 오류 (Config 없음)";
             showFeedback("Firebase 설정 오류: Config를 찾을 수 없습니다.", 'error');
             return;
         }
 
-        app = initializeApp(firebaseConfig);
-        db = getFirestore(app);
-        auth = getAuth(app);
-        
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                // 로그인 성공
-                userId = user.uid;
-                logCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tutoring_logs`);
-                
-                // 저장 버튼 활성화
-                const saveBtn = document.getElementById('save-button');
-                saveBtn.disabled = false;
-                saveBtn.innerText = '기록 저장하기';
-                
-                setupLogListener();
-            } else {
-                // 로그인 시도
-                try {
-                    if (initialAuthToken) {
-                        await signInWithCustomToken(auth, initialAuthToken);
-                    } else {
-                        await signInAnonymously(auth);
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    // 로그인 성공 상태
+                    userId = user.uid;
+                    logCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tutoring_logs`);
+                    
+                    // 저장 버튼 활성화
+                    saveBtn.disabled = false;
+                    saveBtn.innerText = '기록 저장하기';
+                    
+                    setupLogListener();
+                } else {
+                    // 로그인 되어 있지 않음 -> 로그인 시도
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                        // 로그인 성공하면 onAuthStateChanged가 다시 호출됨
+                    } catch (error) {
+                        console.error("Login Error:", error);
+                        saveBtn.innerText = "로그인 실패";
+                        showFeedback("로그인에 실패했습니다.", 'error');
                     }
-                } catch (error) {
-                    console.error("Login Error:", error);
-                    showFeedback("로그인에 실패했습니다.", 'error');
                 }
-            }
-        });
+            });
+        } catch (e) {
+            console.error("Firebase Init Error:", e);
+            saveBtn.innerText = "초기화 오류";
+        }
     }
     
     // --- Firestore 리스너 ---
@@ -515,21 +543,6 @@
             if (statusMessageEl) statusMessageEl.innerText = "데이터 로딩 중 오류 발생";
         });
     }
-
-    // --- UI 초기화 ---
-    document.addEventListener('DOMContentLoaded', () => {
-        document.getElementById('date').valueAsDate = new Date();
-        createClassButtons();
-        createStudentButtons();
-        createLogFilterButtons();
-        setupModalEvents(); // 모달 이벤트 연결
-        
-        // Firebase 시작
-        initializeFirebase();
-
-        // 저장 버튼 이벤트
-        document.getElementById('save-button').addEventListener('click', saveLog);
-    });
 
     // 모달 관련 이벤트 설정
     function setupModalEvents() {
@@ -769,7 +782,7 @@
                     <span class="delete-log-icon" title="기록 삭제">🗑️</span>
                 `;
                 
-                // [수정] 삭제 모달 열기
+                // 삭제 모달 열기
                 const deleteIcon = logEntry.querySelector('.delete-log-icon');
                 deleteIcon.addEventListener('click', () => {
                     deleteTargetId = log.id;
